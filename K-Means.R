@@ -1,0 +1,195 @@
+# =========================
+#  Pre-Processing
+# =========================
+
+library(dplyr)
+library(ggplot2)
+library(e1071)
+
+df = read.csv(file="C:\\Users\\adana\\OneDrive - University of Florida\\Documents\\medical_insurance.csv", header=TRUE)
+set.seed(123) # set seed for repetition
+
+df <- df %>%
+  filter(age > 18) # filter for only adults
+
+# Data frame with 16 key features instead of 54
+clust_df <- df %>%
+  select(
+    age,
+    income,
+    bmi,
+    visits_last_year,
+    hospitalizations_last_3yrs,
+    days_hospitalized_last_3yrs,
+    medication_count,
+    systolic_bp,
+    diastolic_bp,
+    ldl,
+    hba1c,
+    annual_medical_cost,
+    claims_count,
+    avg_claim_amount,
+    total_claims_paid,
+    chronic_count
+  )
+
+
+clust_scaled <- scale(clust_df) # scale the data frame
+
+# Elbow method to select k
+wss <- numeric(10)
+
+
+for (k in 1:10) {
+  wss[k] <- kmeans(clust_scaled, centers = k, nstart = 25)$tot.withinss
+}
+
+plot(
+  1:10, wss, type = "b", pch = 19,
+  xlab = "Number of Clusters (k)",
+  ylab = "Total Within-Cluster Sum of Squares",
+  main = "Elbow Method"
+)
+
+
+# =========================
+# K-MEANS (k = 3)
+# =========================
+
+
+# run k-means with k = 3
+kmeans_result <- kmeans(clust_scaled, centers = 3, nstart = 25)
+
+# Add clusters
+clust_df$cluster <- as.factor(kmeans_result$cluster)
+
+# Cluster Sizes
+table(clust_df$cluster)
+
+# Cluster summary and means
+cluster_summary <- clust_df %>%
+  group_by(cluster) %>%
+  summarise(across(everything(), mean))
+
+print(cluster_summary)
+
+# Unscale Centers
+centers_unscaled <- sweep(
+  kmeans_result$centers,
+  2,
+  attr(clust_scaled, "scaled:scale"),
+  "*"
+)
+
+centers_unscaled <- sweep(
+  centers_unscaled,
+  2,
+  attr(clust_scaled, "scaled:center"),
+  "+"
+)
+
+centers_unscaled <- as.data.frame(centers_unscaled)
+centers_unscaled$cluster <- rownames(centers_unscaled)
+
+print(centers_unscaled)
+
+# Run PCA
+pca <- prcomp(clust_scaled)
+pca$rotation
+pca_df <- data.frame(
+  PC1 = pca$x[, 1],
+  PC2 = pca$x[, 2],
+  cluster = as.factor(kmeans_result$cluster)
+)
+
+# plot pca
+ggplot(pca_df, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "K-means Clusters (k = 3, PCA Projection)") +
+  theme_minimal()
+
+# Plot Boxplot for Annual Medical Cost by Clusters
+ggplot(clust_df, aes(cluster, annual_medical_cost, fill = cluster)) +
+  geom_boxplot() +
+  labs(title = "Annual Medical Cost by Cluster") +
+  theme_minimal()
+
+# Plot Boxplot for Chronic Conditions by Cluster
+ggplot(clust_df, aes(cluster, chronic_count, fill = cluster)) +
+  geom_boxplot() +
+  labs(title = "Chronic Conditions by Cluster") +
+  theme_minimal()
+
+# Evaluate Clusters with the is high risk variable
+if ("is_high_risk" %in% names(clust_df)) {
+    clust_df %>%
+    group_by(cluster) %>%
+    summarise(high_risk_rate = mean(is_high_risk)) %>%
+    print()
+}
+
+
+
+# =========================
+# Fuzzy K-MEANS (k = 3)
+# =========================
+
+
+# fuzzy k-means fitting
+fuzzy_result <- cmeans(
+  clust_scaled,
+  centers = 3,     # same k as k-means
+  m = 2,           # standard fuzziness parameter
+  iter.max = 100
+)
+
+# Needs membership matrix
+membership <- fuzzy_result$membership
+
+# Each row sums to 1
+head(membership)
+
+# Assign points to highest membership clusters
+fuzzy_cluster <- apply(membership, 1, which.max)
+
+# Add to dataset
+clust_df$fuzzy_cluster <- as.factor(fuzzy_cluster)
+
+
+# How many points in each cluster (one cluster has nearly no points*)
+table(clust_df$fuzzy_cluster)
+
+# Cluster Means
+fuzzy_summary <- clust_df %>%
+  group_by(fuzzy_cluster) %>%
+  summarise(across(where(is.numeric), mean))
+
+print(fuzzy_summary)
+
+# PCA for Fuzzy
+pca <- prcomp(clust_scaled)
+
+pca_df <- data.frame(
+  PC1 = pca$x[,1],
+  PC2 = pca$x[,2],
+  cluster = as.factor(fuzzy_cluster)
+)
+
+ggplot(pca_df, aes(PC1, PC2, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Fuzzy K-means Clusters (PCA Projection)") +
+  theme_minimal()
+
+# Get how ambiguous each point is (all nearly 1/k probability)
+max_membership <- apply(membership, 1, max)
+
+summary(max_membership)
+
+# Get total uncertain points
+uncertain_points <- sum(max_membership < 0.7)
+uncertain_points
+
+# Make a histogram of maximum membership probability
+hist(max_membership, breaks = 30,
+     main = "Cluster Membership Confidence",
+     xlab = "Max Membership Probability")
