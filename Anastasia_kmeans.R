@@ -5,39 +5,43 @@
 library(dplyr)
 library(tidyverse)
 library(ggplot2)
-
-df <- read.csv("/Users/nastya/Desktop/Spring_2026/Stats Learning/Insurance Risk Algorithm/medical_insurance.csv")
+library(corrplot)
 
 set.seed(123) # set seed for repetition
+
+df <- read.csv("/Users/nastya/Desktop/Spring_2026/Stats Learning/Insurance Risk Algorithm/medical_insurance.csv")
 
 df <- df %>%
   filter(age > 18) # filter for only adults
 
-
-
 # Data frame with 16 key features instead of 54
-# clust_df_og <- df %>%
-#   dplyr::select(
-#     age,
-#     income,
-#     bmi,
-#     visits_last_year,
-#     hospitalizations_last_3yrs,
-#     days_hospitalized_last_3yrs,
-#     medication_count,
-#     systolic_bp,
-#     diastolic_bp,
-#     ldl,
-#     hba1c,
-#     annual_medical_cost,
-#     claims_count,
-#     avg_claim_amount,
-#     total_claims_paid,
-#     chronic_count
-#   )
+clust_df_cont <- df %>%
+  dplyr::select(
+    age,
+    income,
+    bmi,
+    visits_last_year,
+    hospitalizations_last_3yrs,
+    days_hospitalized_last_3yrs,
+    medication_count,
+    systolic_bp,
+    diastolic_bp,
+    ldl,
+    hba1c,
+    annual_medical_cost,
+    claims_count,
+    avg_claim_amount,
+    total_claims_paid,
+    chronic_count
+  )
+
+# 1) Find Correlations and Subset
+clust_scaled_cont <- scale(clust_df_cont) # scale the data frame
+cor_matrix_cont <- cor(clust_scaled_cont) #Could change all variables to numeric to find proxies for cat vars
+corrplot(cor_matrix_cont)
 
 # Less correlation btw variables: kept important vars on health status, utilization and cost
-clust_df <- df %>%
+clust_df <- clust_df_cont %>%
   dplyr::select(
     age,
     income,
@@ -48,21 +52,14 @@ clust_df <- df %>%
     chronic_count
   )
 
+# Correlation after subsetting
 clust_scaled <- scale(clust_df) # scale the data frame
+cor_matrix <- cor(clust_scaled) #Could change all variables to numeric to find proxies for cat vars
+corrplot(cor_matrix)
 
-#Could change all variables to numeric to find proxies for cat vars
-cor_matrix <- cor(clust_scaled)
-library(corrplot)
-corrplot(cor_matrix, method = "circle")
-
-# corr_signif <- as.data.frame(cor_matrix) %>%
-#   filter(if_any(everything(), ~ abs(.) >= 0.4 & abs(.) < 1))
-# 
-# View(corr_signif)
-
+# 2) K-means
 # Elbow method to select k
 wss <- numeric(10)
-
 
 for (k in 1:10) {
   wss[k] <- kmeans(clust_scaled, centers = k, nstart = 25)$tot.withinss
@@ -75,7 +72,7 @@ plot(
   main = "Elbow Method"
 )
 
-# run k-means with k = 3
+# Run k-means with k = 3
 kmeans_result <- kmeans(clust_scaled, centers = 3, nstart = 25)
 
 # Add clusters
@@ -87,11 +84,13 @@ table(clust_df$cluster)
 # Cluster summary and means
 cluster_summary <- clust_df %>%
   group_by(cluster) %>%
-  summarise(across(everything(), mean))
+  relocate(cluster, .before = age) %>%
+  summarise(across(everything(), mean)) %>% 
+  mutate(across(where(is.numeric), \(x) round(x, 2)))
 
-print(cluster_summary)
+View(cluster_summary)
 
-# Unscale Centers
+# Unscale Centers WHAT DOES THIS DO?
 centers_unscaled <- sweep(
   kmeans_result$centers,
   2,
@@ -111,8 +110,7 @@ centers_unscaled$cluster <- rownames(centers_unscaled)
 
 print(centers_unscaled)
 
-
-# Run PCA
+# 3) Visualization: Run PCA
 pca <- prcomp(clust_scaled)
 
 pca_df <- data.frame(
@@ -123,8 +121,45 @@ pca_df <- data.frame(
 
 summary(pca)
 
+# plot pca 1 and 2
+ggplot(pca_df, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "K-means Clusters (k = 3, PCA Projection)") +
+  theme_minimal()
 
-library(ggplot2)
+# Plot Boxplot for Avg Claim Amount by Clusters
+ggplot(clust_df, aes(cluster, avg_claim_amount, fill = cluster)) +
+  geom_boxplot() +
+  labs(title = "Avg Claim Amount by Cluster") +
+  theme_minimal()
+
+# Plot Boxplot for Chronic Conditions by Cluster
+ggplot(clust_df, aes(cluster, chronic_count, fill = cluster)) +
+  geom_boxplot() +
+  labs(title = "Chronic Conditions by Cluster") +
+  theme_minimal()
+
+
+# Assuming clust_df has your cluster assignments and your original df 
+clust_df$is_high_risk <-df$is_high_risk
+result <- clust_df %>%
+  group_by(cluster) %>%
+  summarise(high_risk_rate = mean(is_high_risk))
+print(result)
+
+# 5) Find Variable Contribution for PC1 and PC2
+
+# Loadings tell you which original variables drive each PC
+loadings <- as.data.frame(pca$rotation[, 1:5])
+print(loadings)
+
+# Easier to read — show top contributing variables per PC
+library(factoextra)
+fviz_contrib(pca, choice = "var", axes = 1)  # PC1
+fviz_contrib(pca, choice = "var", axes = 2)  # PC2
+fviz_contrib(pca, choice = "var", axes = 1:5) # across all 5
+
+# 6 EXTRA) K-means on PC's
 
 # Extract % variance explained
 var_explained <- pca$sdev^2 / sum(pca$sdev^2) * 100
@@ -156,65 +191,27 @@ pc_scores <- as.data.frame(pca$x[, 1:5])
 kmeans_pc5 <- kmeans(pc_scores, centers = 3, nstart = 25)
 pc_scores$cluster <- as.factor(kmeans_pc5$cluster)
 
-library(ggplot2)
 
+# K-means cluster when run on firs 5 PC's
 ggplot(pc_scores, aes(x = PC1, y = PC2, color = cluster)) +
   geom_point(alpha = 0.7, size = 3) +
   labs(title = "K-Means Clusters on PC1 vs PC2") +
   theme_minimal()
-
-seed(123)
 
 # Or with fviz_cluster — pass only the 5 PCs (no cluster column)
 fviz_cluster(kmeans_result, data = pc_scores[, 1:5],
              geom = "point", ellipse.type = "convex",
              palette = "jco", ggtheme = theme_minimal())
 
-# Loadings tell you which original variables drive each PC
-loadings <- as.data.frame(pca$rotation[, 1:5])
-print(loadings)
-
-# Easier to read — show top contributing variables per PC
-library(factoextra)
-fviz_contrib(pca, choice = "var", axes = 1)  # PC1
-fviz_contrib(pca, choice = "var", axes = 2)  # PC2
-fviz_contrib(pca, choice = "var", axes = 1:5) # across all 5
-
-
-# Profile each cluster using original variables
+# Summary of k-means_pca5: Profile each cluster using original variables
 cluster_summary_pca5 = clust_df |>
   group_by(cluster) |>
   summarise(across(where(is.numeric), mean))
-# 
-# # plot pca
-# ggplot(pca_df, aes(x = PC1, y = PC2, color = cluster)) +
-#   geom_point(alpha = 0.6) +
-#   labs(title = "K-means Clusters (k = 3, PCA Projection)") +
-#   theme_minimal()
-# 
-# # # Plot Boxplot for Annual Medical Cost by Clusters
-# # ggplot(clust_df, aes(cluster, annual_medical_cost, fill = cluster)) +
-# #   geom_boxplot() +
-# #   labs(title = "Annual Medical Cost by Cluster") +
-# #   theme_minimal()
-# 
-# # Plot Boxplot for Avg Claim Amount by Clusters
-# ggplot(clust_df, aes(cluster, avg_claim_amount, fill = cluster)) +
-#   geom_boxplot() +
-#   labs(title = "Avg Claim Amount by Cluster") +
-#   theme_minimal()
-# 
-# 
-# # Plot Boxplot for Chronic Conditions by Cluster
-# ggplot(clust_df, aes(cluster, chronic_count, fill = cluster)) +
-#   geom_boxplot() +
-#   labs(title = "Chronic Conditions by Cluster") +
-#   theme_minimal()
-# 
-# # Evaluate Clusters with the is high risk variable
-# if ("is_high_risk" %in% names(clust_df)) {
-#   clust_df %>%
-#     group_by(cluster) %>%
-#     summarise(high_risk_rate = mean(is_high_risk)) %>%
-#     print()
-# }
+
+# Evaluate Performance of groups
+pc_scores$is_high_risk <-df$is_high_risk
+result_pca <- pc_scores %>%
+  group_by(cluster) %>%
+  summarise(high_risk_rate = mean(is_high_risk))
+print(result_pca)
+
