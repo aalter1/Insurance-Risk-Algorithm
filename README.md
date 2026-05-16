@@ -1,2 +1,4 @@
 # Insurance-Risk-Algorithm
-Hi
+
+This repository examines two unsupervised learning methods, k-means clustering and its extension, fuzzy k-means (fuzzy clustering), and evaluates their performance on the Kaggle insurance claims dataset. While k-means assigns each observation to a single cluster, fuzzy k-means allows partial membership across multiple clusters, offering greater flexibility in capturing overlapping data structures. We provide both intuitive and technical explanations of each method and apply them to identify patterns within insurance claim data. The results show that fuzzy k-means provides a more flexible representation of overlapping data structures, though in this application it produces less distinct and less actionable clusters compared to k-means.  However, this comes at the cost of increased computational complexity and reduced interpretability. Overall, the findings suggest that fuzzy k-means can offer meaningful advantages over traditional k-means in real-world datasets with ambiguity, though the benefits depend on the specific application and trade-offs between accuracy and simplicity.
+
